@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <title>Mon GPT RAG</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+</head>
+<body>
+  <h1>Chat avec RAG</h1>
+  <div id="log"></div>
+  <form id="chat">
+    <input id="q" placeholder="Posez votre question..." required style="width:60%" />
+    <button type="submit">Envoyer</button>
+  </form>
+  <script>
+    const endpoint = window.RAG ? '/api/rag-chat' : '/api/chat';
+    const log = document.getElementById('log');
+    const form = document.getElementById('chat');
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      const q = document.getElementById('q');
+      const msg = q.value.trim();
+      if (!msg) return;
+      log.innerHTML += `<p><strong>Vous:</strong> ${msg}</p>`;
+      q.value = '';
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({messages:[{role:'user',content:msg}]})
+      });
+      const data = await res.json();
+      log.innerHTML += `<p><strong>GPT:</strong> ${data.reply||data.error}</p>`;
+    });
+  </script>
+</body>
+</html>
