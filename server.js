@@ -5,86 +5,63 @@ import OpenAI from 'openai';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const allowed = (process.env.ALLOWED_ORIGINS||'').split(',').map(s=>s.trim()).filter(Boolean);
 
-// CORS config
-const allowed = (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
-app.use(cors({
-  origin: (origin, cb) => {
-    if (!origin || allowed.includes(origin)) return cb(null, true);
-    return cb(new Error('Origin not allowed by CORS'), false);
-  }
-}));
+app.use(cors({ origin:(origin,cb)=>{ if(!origin||allowed.includes(origin))return cb(null,true); cb(new Error('Origin not allowed'),false);} }));
 app.use(express.json());
 app.use(express.static('public'));
 
-// OpenAI client
-const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-// System prompt
+const client = new OpenAI({apiKey:process.env.OPENAI_API_KEY});
 const SYSTEM_PROMPT = `
-Tu es "Mon GPT Déglutition" : orthophoniste virtuel spécialisé en déglutition.
-- Style: clair, bienveillant, concret.
-- Mentionne que tes réponses ne remplacent pas un avis clinique.
-- Pas de diagnostic individuel; oriente vers un professionnel si besoin.
-- Si hors périmètre, dis-le et propose une ressource ou une démarche.
+#Rôle
+Tu es un expert de la déglutition chargé de répondre aux questions des soignants.
+
+#Tâche
+Ta mission est de répondre aux questions des professionnels du soin qui se questionnent sur les difficultés des résidents d'ehpad pour prendre leur repas en sécurité. Il faudra les rassurer.
+
+#Objectif
+Fournir des réponses précises et pédagogiques basées exclusivement sur la base de données structurée mise à disposition. Les réponses doivent informer clairement sans être trop longues.
+
+#Contexte
+Tu interviens dans le cadre d’un chatbot conversationnel. Les utilisateurs sont majoritairement des soignants qui cherchent des informations fiables sur la dysphagie et sa prévention. L’ensemble de tes réponses doit être généré uniquement à partir de la base de données fournie.
+
+#Tonalité & Style
+Utilise un langage accessible à tous, avec un style pédagogique, clair, professionnel, sans jargon inutile.
+
+#Contraintes
+Ecrire la phrase d'introduction suivante  :
+"Je suis un assistant intelligent spécialisé dans la prévention des troubles de la déglutition. Je vais vous aider à trouver des réponses claires à vos questionnements"
+
+N’utilise jamais d’informations externes à la base de données fournie.
+Si aucune réponse ne peut être apportée, invite l’utilisateur à contacter l’administrateur du site par mail.
+Aucune formule introductive automatique (type "Bonne question").
+
+#Format & Livrable
+Les réponses doivent être structurées :
+Utilise des titres ou sous-titres si nécessaire.
+Rédige en paragraphes concis, bien séparés.
 `;
 
-// Health check
-app.get('/health', (req, res) => {
-  const hasKey = !!process.env.OPENAI_API_KEY;
-  res.json({
-    ok: true,
-    model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
-    hasKey,
-    env: process.env.NODE_ENV || 'production'
-  });
-});
-
-// Basic chat endpoint
-app.post('/api/chat', async (req, res) => {
+// Streaming RAG
+app.get('/api/stream-rag-chat', async (req, res) => {
   try {
-    const { messages = [] } = req.body;
-    const response = await client.responses.create({
-      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
-      input: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        ...messages
-      ],
-    });
-    if (!response.output_text) {
-      console.error('Empty response from OpenAI:', response);
-      return res.status(500).json({ error: "Réponse vide d'OpenAI" });
-    }
-    res.json({ reply: response.output_text });
-  } catch (err) {
-    console.error('OpenAI error:', err.status, err.message, err.response?.data);
-    res.status(err.status || 500).json({
-      error: 'OpenAI request failed',
-      detail: err.message,
-      data: err.response?.data || null
-    });
-  }
-});
-
-// RAG chat endpoint
-app.post('/api/rag-chat', async (req, res) => {
-  try {
-    const { messages = [] } = req.body;
-    const response = await client.assistants.chat.completions.create({
+    const messages = JSON.parse(req.query.messages||'[]');
+    const stream = await client.assistants.chat.completions.create({
       assistant_id: process.env.OPENAI_ASSISTANT_ID,
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        ...messages
-      ],
+      messages: [{role:'system',content:SYSTEM_PROMPT},...messages],
+      stream: true
     });
-    const reply = response.choices[0].message.content;
-    res.json({ reply });
-  } catch (err) {
-    console.error('RAG error:', err.status, err.message, err.response?.data);
-    res.status(err.status || 500).json({ error: err.message, data: err.response?.data || null });
+    res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive'});
+    for await (const part of stream) {
+      const chunk = part.choices[0].delta?.content||'';
+      if(chunk) res.write(`data: ${chunk.replace(/\n/g,'\\n')}\n\n`);
+    }
+    res.write('data: [DONE]\n\n');
+    res.end();
+  } catch(err) {
+    console.error('Streaming RAG error:',err);
+    res.status(500).json({error:err.message});
   }
 });
-
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
+app.get('/health',(req,res)=>res.json({ok:true,hasKey:!!process.env.OPENAI_API_KEY}));
+app.listen(PORT,()=>console.log(`Server on http://localhost:${PORT}`));
