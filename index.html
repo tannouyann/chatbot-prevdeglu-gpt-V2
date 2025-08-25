@@ -1,35 +1,35 @@
 <!doctype html>
 <html lang="fr">
 <head>
-  <meta charset="utf-8" />
-  <title>Mon GPT RAG</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta charset="utf-8"/>
+  <title>GPT Déglutition RAG Streaming</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <style>
+    body{font-family:system-ui,sans-serif;max-width:720px;margin:2rem auto;padding:1rem;}
+    #log p{background:#f6f6f6;padding:.75rem;border-radius:.5rem;}
+    .me{background:#e8f0fe;} .stream{font-style:italic;}
+  </style>
 </head>
 <body>
-  <h1>Chat avec RAG</h1>
+  <h1>Chat Déglutition (RAG + Streaming)</h1>
   <div id="log"></div>
-  <form id="chat">
-    <input id="q" placeholder="Posez votre question..." required style="width:60%" />
-    <button type="submit">Envoyer</button>
-  </form>
+  <form id="chat"><input id="q" placeholder="Votre question..." required style="width:70%"/><button>Envoyer</button></form>
   <script>
-    const endpoint = window.RAG ? '/api/rag-chat' : '/api/chat';
-    const log = document.getElementById('log');
-    const form = document.getElementById('chat');
-    form.addEventListener('submit', async e => {
-      e.preventDefault();
-      const q = document.getElementById('q');
-      const msg = q.value.trim();
-      if (!msg) return;
-      log.innerHTML += `<p><strong>Vous:</strong> ${msg}</p>`;
-      q.value = '';
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({messages:[{role:'user',content:msg}]})
-      });
-      const data = await res.json();
-      log.innerHTML += `<p><strong>GPT:</strong> ${data.reply||data.error}</p>`;
+    const log=document.getElementById('log'),form=document.getElementById('chat');
+    form.addEventListener('submit',e=>{e.preventDefault();
+      const qv=document.getElementById('q'),msg=qv.value.trim(); if(!msg)return;
+      log.innerHTML+=`<p class="me"><strong>Vous:</strong> ${msg}</p>`; qv.value='';
+      const history=JSON.stringify([{role:'user',content:msg}]);
+      const url=`/api/stream-rag-chat?messages=${encodeURIComponent(history)}`;
+      fetch(url).then(res=>{
+        const reader=res.body.getReader(),dec=new TextDecoder();
+        let botText='',p=document.createElement('p');p.className='stream';log.appendChild(p);
+        function read(){reader.read().then(({done,value})=>{if(done)return;
+          const chunk=dec.decode(value,{stream:true}).split('\n\n')
+            .map(l=>l.replace(/^data: /,'')).filter(l=>l&&l!=='[DONE]').join('');
+          botText+=chunk;p.textContent='GPT: '+botText;read();});}
+        read();
+      }).catch(err=>{log.innerHTML+=`<p><strong>Erreur:</strong>${err.message}</p>`;});
     });
   </script>
 </body>
